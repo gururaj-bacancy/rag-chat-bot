@@ -32,49 +32,133 @@ Sum insured ₹5,00,000 · room rent limit ₹5,000/day · room rent charged ₹
 
 ## Tasks
 
-1. **Project scaffolding** — `docker-compose.yml` (Postgres+pgvector), `backend/app/main.py` + `config.py`, `.env.example`, `requirements.txt`. FastAPI skeleton with `/health`. Test: health check returns 200.
+### Task 1: Project Scaffolding
 
-2. **Database schema & connection** — `backend/migrations/001_init.sql` (documents, chunks, line_items, policy_rules, messages; pgvector + tsvector columns), SQLAlchemy models in `app/db/models.py`, migration runner, test-DB fixture in `conftest.py`. Test: insert/query round trip per table.
+Files: `docker-compose.yml` (Postgres+pgvector), `backend/app/main.py` + `config.py`, `.env.example`, `backend/requirements.txt`.
 
-3. **PDF parsing** — `app/ingestion/pdf_parser.py`: `parse_pdf(path) -> list[TextBlock]` (text + 1-indexed page number) via PyMuPDF. Test: generated 2-page PDF returns correct per-page text.
+FastAPI skeleton with `/health`. Test: health check returns 200.
 
-4. **Policy chunker** — `app/ingestion/chunker.py`: `chunk_policy_blocks(blocks) -> list[Chunk]`, splits on short-all-caps heading lines. Test: heading-delimited blocks produce the right chunk boundaries.
+### Task 2: Database Schema & Connection
 
-5. **Voyage embeddings client** — `app/ingestion/embeddings.py`: `embed_documents(texts)` / `embed_query(text)` wrapping `voyageai.Client.embed`, `input_type="document"` vs `"query"`. Test: mocked client called with correct model/input_type.
+Files: `backend/migrations/001_init.sql` (documents, chunks, line_items, policy_rules, messages; pgvector + tsvector columns), SQLAlchemy models in `app/db/models.py`, migration runner, test-DB fixture in `conftest.py`.
 
-6. **Contextual blurb generator** — `app/ingestion/contextual.py`: `generate_contextual_text(chunk_text, document_summary) -> str`, one Haiku call producing a situating blurb prepended to the chunk (Anthropic's contextual retrieval technique). Test: mocked Haiku response, blurb + chunk concatenated correctly.
+Test: insert/query round trip per table.
 
-7. **Bill/settlement structured extraction** — `app/ingestion/extraction.py`: Pydantic `BillExtraction`/`SettlementExtraction` (+ line item models), `extract_bill`/`extract_settlement` via `client.messages.parse(model="claude-haiku-4-5", output_format=...)`. Test: mocked `parsed_output` round-trips correctly.
+### Task 3: PDF Parsing
 
-8. **Policy rule extraction** — same file: `PolicyRuleExtraction` (sum insured, room rent limit + type, co-pay %, sub-limits dict), `extract_policy_rules`. Test: mocked parse returns expected structured rules.
+Files: `app/ingestion/pdf_parser.py`: `parse_pdf(path) -> list[TextBlock]` (text + 1-indexed page number) via PyMuPDF.
 
-9. **Ingestion pipeline** — `app/ingestion/pipeline.py`: `ingest_document(session, document_id, doc_type, pdf_path)` — routes policy docs through chunk+contextualize+embed+extract-rules, bill/settlement through chunk+embed+extract-line-items; sets `Document.status`. Test: mocked sub-components, verify correct rows land in each table per doc type.
+Test: generated 2-page PDF returns correct per-page text.
 
-10. **Document CRUD API** — `app/api/documents.py`: `POST /documents` (upload, rejects duplicate active type with 409, triggers ingestion), `GET /documents`, `DELETE /documents/{id}` (cascades). Test: upload/list/delete/duplicate-reject via `TestClient`.
+### Task 4: Policy Chunker
 
-11. **Hybrid search** — `app/retrieval/hybrid_search.py`: `hybrid_search(session, query_text, query_embedding, top_k) -> list[SearchResult]`, dense (pgvector cosine) + full-text (`tsvector`), fused via Reciprocal Rank Fusion. Test: seeded chunks, matching query ranks correct chunk first.
+Files: `app/ingestion/chunker.py`: `chunk_policy_blocks(blocks) -> list[Chunk]`, splits on short-all-caps heading lines.
 
-12. **Reconciliation rules** — `app/reconciliation/rules.py`: pure functions `apply_sub_limits`, `compute_room_rent_proportionate_deduction`, `compute_admissible_amount`. Test: assert exact figures from the Reference table above.
+Test: heading-delimited blocks produce the right chunk boundaries.
 
-13. **Reconciliation engine** — `app/reconciliation/engine.py`: `reconcile_claim(session) -> ReconciliationReport | None`, pulls active bill/policy/settlement from DB, applies rules, diffs against the settlement letter's actual approved amount. Test: seeded planted-discrepancy scenario matches the Reference table exactly; missing documents returns `None`.
+### Task 5: Voyage Embeddings Client
 
-14. **Agent tools** — `app/agent/tools.py`: `make_search_docs_tool(session)` / `make_reconcile_claim_tool(session)`, `@beta_tool`-decorated, returning JSON (chunk_id/doc_type/page/text; or the reconciliation report). Test: each tool's JSON output shape, and the "missing documents" error path.
+Files: `app/ingestion/embeddings.py`: `embed_documents(texts)` / `embed_query(text)` wrapping `voyageai.Client.embed`, `input_type="document"` vs `"query"`.
 
-15. **Agent chat loop** — `app/agent/chat.py`: `stream_agent_response(session, history, user_message)` via `client.beta.messages.tool_runner(..., stream=True)`, system prompt requiring standalone `search_docs` queries and `[[chunk_id]]` citation markers. Test: mocked tool runner, streamed tokens concatenate correctly.
+Test: mocked client called with correct model/input_type.
 
-16. **Chat API & persistence** — `app/api/chat.py`: `POST /chat/message` (SSE: token events + final `done` event with citations resolved/renumbered from `[[chunk_id]]`), `GET /chat/history`. Persists both turns to `messages`. Test: citation resolution + persistence via `TestClient` streaming.
+### Task 6: Contextual Blurb Generator
 
-17. **Frontend scaffolding** — Vite+React+TS app, `src/types.ts`, `src/api/client.ts` (`listDocuments`, `uploadDocument`, `deleteDocument`, `getChatHistory`, `streamChatMessage`), base `App.tsx` layout. Test: renders sidebar + chat regions.
+Files: `app/ingestion/contextual.py`: `generate_contextual_text(chunk_text, document_summary) -> str`, one Haiku call producing a situating blurb prepended to the chunk (Anthropic's contextual retrieval technique).
 
-18. **Document sidebar** — `components/DocumentSidebar.tsx`: per-type upload inputs, list with delete buttons, wired to the API client. Test: RTL, upload/list/delete flow with mocked API.
+Test: mocked Haiku response, blurb + chunk concatenated correctly.
 
-19. **Chat panel** — `components/ChatPanel.tsx`: message list, input, consumes SSE stream token-by-token, renders numbered citations. Test: RTL, streamed response renders progressively with citation list.
+### Task 7: Bill/Settlement Structured Extraction
 
-20. **Synthetic sample data** — `scripts/generate_sample_data.py`: `generate_sample_documents(output_dir)` produces bill/policy/settlement PDFs (reportlab) encoding the exact Reference-table numbers, including the planted ₹70,000 wrong approval. Test: generated PDFs parse back to the expected figures.
+Files: `app/ingestion/extraction.py`: Pydantic `BillExtraction`/`SettlementExtraction` (+ line item models), `extract_bill`/`extract_settlement` via `client.messages.parse(model="claude-haiku-4-5", output_format=...)`.
 
-21. **End-to-end verification** — integration test (real API keys, skipped otherwise): ingest the generated sample documents through the real pipeline, run `reconcile_claim`, assert it catches the planted ₹5,937.50 discrepancy exactly.
+Test: mocked `parsed_output` round-trips correctly.
 
-22. **(Optional/stretch) Golden eval script** — `scripts/run_eval.py`: a handful of Q&A pairs run against the ingested sample claim, pass/fail on expected fragments. Manual demo tool, not part of the automated suite — build only if time allows.
+### Task 8: Policy Rule Extraction
+
+Files: same as Task 7 — adds `PolicyRuleExtraction` (sum insured, room rent limit + type, co-pay %, sub-limits dict), `extract_policy_rules`.
+
+Test: mocked parse returns expected structured rules.
+
+### Task 9: Ingestion Pipeline
+
+Files: `app/ingestion/pipeline.py`: `ingest_document(session, document_id, doc_type, pdf_path)` — routes policy docs through chunk+contextualize+embed+extract-rules, bill/settlement through chunk+embed+extract-line-items; sets `Document.status`.
+
+Test: mocked sub-components, verify correct rows land in each table per doc type.
+
+### Task 10: Document CRUD API
+
+Files: `app/api/documents.py`: `POST /documents` (upload, rejects duplicate active type with 409, triggers ingestion), `GET /documents`, `DELETE /documents/{id}` (cascades).
+
+Test: upload/list/delete/duplicate-reject via `TestClient`.
+
+### Task 11: Hybrid Search
+
+Files: `app/retrieval/hybrid_search.py`: `hybrid_search(session, query_text, query_embedding, top_k) -> list[SearchResult]`, dense (pgvector cosine) + full-text (`tsvector`), fused via Reciprocal Rank Fusion.
+
+Test: seeded chunks, matching query ranks correct chunk first.
+
+### Task 12: Reconciliation Rules
+
+Files: `app/reconciliation/rules.py`: pure functions `apply_sub_limits`, `compute_room_rent_proportionate_deduction`, `compute_admissible_amount`.
+
+Test: assert exact figures from the Reference table above.
+
+### Task 13: Reconciliation Engine
+
+Files: `app/reconciliation/engine.py`: `reconcile_claim(session) -> ReconciliationReport | None`, pulls active bill/policy/settlement from DB, applies rules, diffs against the settlement letter's actual approved amount.
+
+Test: seeded planted-discrepancy scenario matches the Reference table exactly; missing documents returns `None`.
+
+### Task 14: Agent Tools
+
+Files: `app/agent/tools.py`: `make_search_docs_tool(session)` / `make_reconcile_claim_tool(session)`, `@beta_tool`-decorated, returning JSON (chunk_id/doc_type/page/text; or the reconciliation report).
+
+Test: each tool's JSON output shape, and the "missing documents" error path.
+
+### Task 15: Agent Chat Loop
+
+Files: `app/agent/chat.py`: `stream_agent_response(session, history, user_message)` via `client.beta.messages.tool_runner(..., stream=True)`, system prompt requiring standalone `search_docs` queries and `[[chunk_id]]` citation markers.
+
+Test: mocked tool runner, streamed tokens concatenate correctly.
+
+### Task 16: Chat API & Persistence
+
+Files: `app/api/chat.py`: `POST /chat/message` (SSE: token events + final `done` event with citations resolved/renumbered from `[[chunk_id]]`), `GET /chat/history`. Persists both turns to `messages`.
+
+Test: citation resolution + persistence via `TestClient` streaming.
+
+### Task 17: Frontend Scaffolding
+
+Files: Vite+React+TS app, `src/types.ts`, `src/api/client.ts` (`listDocuments`, `uploadDocument`, `deleteDocument`, `getChatHistory`, `streamChatMessage`), base `App.tsx` layout.
+
+Test: renders sidebar + chat regions.
+
+### Task 18: Document Sidebar
+
+Files: `components/DocumentSidebar.tsx`: per-type upload inputs, list with delete buttons, wired to the API client.
+
+Test: RTL, upload/list/delete flow with mocked API.
+
+### Task 19: Chat Panel
+
+Files: `components/ChatPanel.tsx`: message list, input, consumes SSE stream token-by-token, renders numbered citations.
+
+Test: RTL, streamed response renders progressively with citation list.
+
+### Task 20: Synthetic Sample Data
+
+Files: `scripts/generate_sample_data.py`: `generate_sample_documents(output_dir)` produces bill/policy/settlement PDFs (reportlab) encoding the exact Reference-table numbers, including the planted ₹70,000 wrong approval.
+
+Test: generated PDFs parse back to the expected figures.
+
+### Task 21: End-to-End Verification
+
+Integration test (real API keys, skipped otherwise): ingest the generated sample documents through the real pipeline, run `reconcile_claim`, assert it catches the planted ₹5,937.50 discrepancy exactly.
+
+### Task 22: Golden Eval Script (Optional/Stretch)
+
+Files: `scripts/run_eval.py`: a handful of Q&A pairs run against the ingested sample claim, pass/fail on expected fragments. Manual demo tool, not part of the automated suite — build only if time allows.
 
 ## Self-Review Notes
 
