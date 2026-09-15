@@ -1,4 +1,4 @@
-# Mediclaim Claim Clarity — RAG Chatbot Design
+# Policy Compare — RAG Chatbot Design
 
 ## Overview
 
