@@ -63,3 +63,29 @@ def extract_settlement(text: str) -> SettlementExtraction:
         output_format=SettlementExtraction,
     )
     return response.parsed_output
+
+RoomRentLimitType = Literal["fixed_amount", "percentage_of_sum_insured", "no_limit"]
+
+class PolicyRuleExtraction(BaseModel):
+    sum_insured: float
+    room_rent_limit_per_day: float | None = None
+    room_rent_limit_type: RoomRentLimitType
+    co_pay_percentage: float = 0.0
+    sub_limits: dict[str, float] = {}
+
+def extract_policy_rules(text: str) -> PolicyRuleExtraction:
+    response = _client.messages.parse(
+        model="claude-haiku-4-5",
+        max_tokens=4096,
+        messages=[{
+            "role": "user",
+            "content": (
+                "Extract the sum insured, room rent limit (and whether it is a "
+                "fixed amount, a percentage of sum insured, or no limit), the "
+                "co-payment percentage, and any per-procedure sub-limits from "
+                f"this mediclaim policy document:\n\n{text}"
+            ),
+        }],
+        output_format=PolicyRuleExtraction,
+    )
+    return response.parsed_output
