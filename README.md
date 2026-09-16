@@ -8,6 +8,7 @@ Implementation complete — all 22 planned tasks are done. **58 backend tests pa
 
 - [docs/design.md](docs/design.md) — architecture, data flow, reconciliation engine design, trust/honesty rules
 - [docs/plan.md](docs/plan.md) — task-by-task implementation roadmap
+- [docs/known-limitations.md](docs/known-limitations.md) — gaps found in review and deliberately deferred (domain-fidelity edge cases, frontend robustness, prompt-injection hardening)
 
 ## Tech Stack
 
