@@ -216,3 +216,58 @@ def test_get_chat_history_returns_persisted_messages_in_order(client, db_session
     assert body[1]["role"] == "assistant"
     assert body[1]["content"] == "hi there"
     assert body[1]["citations"] == []
+
+
+def test_stream_failure_emits_error_event_and_persists_only_the_user_message(client, db_session):
+    """If the agent stream dies mid-flight, the SSE contract must terminate
+    with an explicit `error` event rather than silently closing — otherwise the
+    UI is left with an empty assistant bubble and no explanation. The user's
+    own message stays persisted (they did ask it); no assistant row is written
+    for the broken answer."""
+
+    def failing_stream(session, history, user_message):
+        yield "Let me check your policy"
+        raise RuntimeError("upstream API error: connection reset")
+
+    with patch("app.api.chat.stream_agent_response", side_effect=failing_stream):
+        with client.stream(
+            "POST", "/chat/message", json={"message": "Why was my claim reduced?"}
+        ) as response:
+            assert response.status_code == 200
+            events = _consume_sse(response)
+
+    # Tokens streamed before the failure are still delivered, then exactly one
+    # terminal error event — and no `done`.
+    assert [e["text"] for e in events if e["type"] == "token"] == ["Let me check your policy"]
+    assert [e["type"] for e in events if e["type"] == "done"] == []
+    error_events = [e for e in events if e["type"] == "error"]
+    assert len(error_events) == 1
+    assert events[-1]["type"] == "error"
+    assert "upstream API error: connection reset" in error_events[0]["message"]
+
+    messages = db_session.query(Message).order_by(Message.id).all()
+    assert len(messages) == 1
+    assert messages[0].role == "user"
+    assert messages[0].content == "Why was my claim reduced?"
+
+
+def test_stream_failure_before_any_token_still_emits_error_event(client, db_session):
+    """The failure can also happen before a single token arrives (e.g. the very
+    first API call is rejected); the stream must still be a well-formed SSE
+    response ending in an error event, not an empty body."""
+
+    def failing_stream(session, history, user_message):
+        raise RuntimeError("rate limited")
+        yield  # pragma: no cover - makes this a generator function
+
+    with patch("app.api.chat.stream_agent_response", side_effect=failing_stream):
+        with client.stream("POST", "/chat/message", json={"message": "hi"}) as response:
+            assert response.status_code == 200
+            events = _consume_sse(response)
+
+    assert len(events) == 1
+    assert events[0]["type"] == "error"
+    assert "rate limited" in events[0]["message"]
+
+    messages = db_session.query(Message).order_by(Message.id).all()
+    assert [m.role for m in messages] == ["user"]

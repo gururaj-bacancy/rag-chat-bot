@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import type { ChatMessage } from '../types'
 import { getChatHistory, streamChatMessage } from '../api/client'
 
+const FAILED_TURN_TEXT = 'Sorry, something went wrong.'
+
 export default function ChatPanel() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -20,6 +22,23 @@ export default function ChatPanel() {
     setMessages((prev) => [...prev, userMessage, { role: 'assistant', content: '' }])
     setInput('')
 
+    // A failed turn surfaces in two places: the `error` alert (the same one the
+    // mount-time history fetch uses) and, in the transcript itself, the
+    // in-progress assistant bubble is replaced with a short apology. The bubble
+    // is rewritten rather than removed so the transcript keeps its turn
+    // structure — the failure stays attached to the question that caused it,
+    // and the indices the streaming callbacks close over stay valid.
+    const failTurn = (reason: string) => {
+      setError(reason)
+      setMessages((prev) => {
+        const next = [...prev]
+        if (next[assistantIndex]) {
+          next[assistantIndex] = { role: 'assistant', content: FAILED_TURN_TEXT }
+        }
+        return next
+      })
+    }
+
     try {
       await streamChatMessage(
         userMessage.content,
@@ -37,9 +56,14 @@ export default function ChatPanel() {
             return next
           })
         },
+        // The stream itself reported a mid-flight failure (backend `error`
+        // event) — the promise still resolves normally, so this is the only
+        // signal that the answer will never arrive.
+        (streamError) => failTurn(streamError),
       )
     } catch (e) {
-      setError((e as Error).message)
+      // The request never got off the ground (network failure, non-2xx).
+      failTurn((e as Error).message)
     }
   }
 

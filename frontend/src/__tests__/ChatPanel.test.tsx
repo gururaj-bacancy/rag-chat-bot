@@ -74,6 +74,40 @@ describe('ChatPanel', () => {
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('Stream failed: connection reset')
+    expect(await screen.findByText(/Sorry, something went wrong\./)).toBeInTheDocument()
+  })
+
+  it('renders an error and replaces the empty assistant bubble when the stream reports a failure', async () => {
+    // The backend terminates a stream that died mid-flight with an `error`
+    // event rather than a `done` event, so streamChatMessage's promise still
+    // resolves normally — onError is the only signal the answer never arrived.
+    let capturedOnToken!: (text: string) => void
+    let capturedOnError!: (message: string) => void
+    vi.spyOn(api, 'streamChatMessage').mockImplementation(
+      async (_msg, onToken, _onDone, onError) => {
+        capturedOnToken = onToken
+        capturedOnError = onError!
+      },
+    )
+    render(<ChatPanel />)
+    await screen.findByPlaceholderText(/ask a question/i)
+
+    fireEvent.change(screen.getByPlaceholderText(/ask a question/i), { target: { value: 'Why?' } })
+    fireEvent.click(screen.getByRole('button', { name: /send/i }))
+
+    // A partial answer had already started streaming before the failure.
+    act(() => capturedOnToken('Let me check your policy'))
+    expect(screen.getByText(/Let me check your policy/)).toBeInTheDocument()
+
+    act(() => capturedOnError('upstream API error: connection reset'))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('upstream API error: connection reset')
+    // The half-finished bubble is replaced rather than left dangling forever.
+    expect(screen.getByText(/Sorry, something went wrong\./)).toBeInTheDocument()
+    expect(screen.queryByText(/Let me check your policy/)).not.toBeInTheDocument()
+    // The user's own question stays in the transcript.
+    expect(screen.getByText(/Why\?/)).toBeInTheDocument()
   })
 
   it('loads and renders chat history on mount', async () => {

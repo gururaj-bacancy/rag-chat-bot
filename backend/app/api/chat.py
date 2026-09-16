@@ -88,9 +88,23 @@ def post_chat_message(request: ChatRequest):
             session.commit()
 
             raw_chunks = []
-            for token in stream_agent_response(session, history, request.message):
-                raw_chunks.append(token)
-                yield f"data: {json.dumps({'type': 'token', 'text': token})}\n\n"
+            try:
+                for token in stream_agent_response(session, history, request.message):
+                    raw_chunks.append(token)
+                    yield f"data: {json.dumps({'type': 'token', 'text': token})}\n\n"
+            except Exception as exc:  # noqa: BLE001 - surfaced to the client below
+                # The stream died mid-flight (API error, network failure, tool
+                # blow-up). Terminate the SSE contract with an explicit `error`
+                # event instead of just closing the connection, which would
+                # leave the UI with a permanently empty assistant bubble and no
+                # explanation. Deliberately no assistant Message row: a
+                # truncated or empty answer is not something to replay as
+                # history on the next page load. The user's own message stays
+                # persisted — they did ask it. Rolling back first discards any
+                # partial writes a failing tool may have staged on this session.
+                session.rollback()
+                yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+                return
 
             raw_text = "".join(raw_chunks)
             cleaned_text, citations = _resolve_citations(session, raw_text)
