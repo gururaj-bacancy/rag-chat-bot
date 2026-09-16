@@ -1,5 +1,4 @@
 import json
-from dataclasses import asdict
 
 from anthropic import beta_tool
 from sqlalchemy.orm import Session
@@ -59,7 +58,15 @@ def make_reconcile_claim_tool(session: Session):
             "matches": report.matches,
             "room_rent_deduction": round(report.breakdown.room_rent_deduction, 2),
             "co_pay_deduction": round(report.breakdown.co_pay_deduction, 2),
-            "room_rent_adjustments": [asdict(a) for a in report.breakdown.room_rent_adjustments],
+            "room_rent_adjustments": [
+                {
+                    "description": a.description,
+                    "original_amount": round(a.original_amount, 2),
+                    "eligible_amount": round(a.eligible_amount, 2),
+                    "deduction": round(a.deduction, 2),
+                }
+                for a in report.breakdown.room_rent_adjustments
+            ],
         })
 
     return reconcile_claim
