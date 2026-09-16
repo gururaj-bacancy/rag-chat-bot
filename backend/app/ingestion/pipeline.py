@@ -17,8 +17,16 @@ def _full_text(blocks) -> str:
     return "\n".join(b.text for b in blocks)
 
 
-def _ingest_policy(session: Session, document_id: int, blocks) -> None:
-    doc_summary = _full_text(blocks)[:1000]
+def _ingest_policy(session: Session, document: Document, blocks) -> None:
+    document_id = document.id
+    full_text = _full_text(blocks)
+    # The 1000-char prefix is context for the per-chunk contextual blurb only
+    # — it situates a chunk within the document and does not need the whole
+    # text. Rule extraction, by contrast, must see the ENTIRE policy: the
+    # room-rent-limit / co-pay / sub-limit clauses routinely sit well past the
+    # first 1000 characters, and feeding it the prefix silently produced
+    # default rules (co_pay_percentage=0.0, sub_limits={}).
+    doc_summary = full_text[:1000]
     chunks = chunk_policy_blocks(blocks)
     contextual_texts = [generate_contextual_text(c.text, doc_summary) for c in chunks]
     embeddings = embed_documents(contextual_texts)
@@ -30,7 +38,7 @@ def _ingest_policy(session: Session, document_id: int, blocks) -> None:
             embedding=embedding,
         ))
 
-    rules = extract_policy_rules(doc_summary)
+    rules = extract_policy_rules(full_text)
     session.add(PolicyRule(
         document_id=document_id, sum_insured=rules.sum_insured,
         room_rent_limit_per_day=rules.room_rent_limit_per_day,
@@ -40,7 +48,8 @@ def _ingest_policy(session: Session, document_id: int, blocks) -> None:
     ))
 
 
-def _ingest_bill_or_settlement(session: Session, document_id: int, doc_type: str, blocks) -> None:
+def _ingest_bill_or_settlement(session: Session, document: Document, doc_type: str, blocks) -> None:
+    document_id = document.id
     full_text = _full_text(blocks)
     doc_summary = full_text[:1000]
 
@@ -56,6 +65,11 @@ def _ingest_bill_or_settlement(session: Session, document_id: int, doc_type: str
 
     if doc_type == "bill":
         extraction = extract_bill(full_text)
+        # Persist the extracted per-day room rent rather than discarding it:
+        # the reconciliation engine needs it to compute the room-rent
+        # proportionate deduction without assuming a fixed stay length.
+        if extraction.room_rent_per_day is not None:
+            document.room_rent_per_day = extraction.room_rent_per_day
         for item in extraction.line_items:
             session.add(LineItem(
                 document_id=document_id, description=item.description,
@@ -63,6 +77,13 @@ def _ingest_bill_or_settlement(session: Session, document_id: int, doc_type: str
             ))
     else:  # settlement
         extraction = extract_settlement(full_text)
+        # Persist the letter's own stated totals. Many real settlement letters
+        # (including the generated sample) print only these three totals and
+        # no per-item table, so reconstructing the approved amount by summing
+        # line items would otherwise produce 0.
+        document.settlement_total_claimed = extraction.total_claimed
+        document.settlement_total_approved = extraction.total_approved
+        document.settlement_total_deducted = extraction.total_deducted
         for item in extraction.line_items:
             session.add(LineItem(
                 document_id=document_id, description=item.description,
@@ -77,9 +98,9 @@ def ingest_document(session: Session, document_id: int, doc_type: str, pdf_path:
     try:
         blocks = parse_pdf(pdf_path)
         if doc_type == "policy":
-            _ingest_policy(session, document_id, blocks)
+            _ingest_policy(session, document, blocks)
         else:
-            _ingest_bill_or_settlement(session, document_id, doc_type, blocks)
+            _ingest_bill_or_settlement(session, document, doc_type, blocks)
         document.status = "indexed"
         session.commit()
         session.execute(sql_text(

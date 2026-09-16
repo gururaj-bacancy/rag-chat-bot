@@ -68,9 +68,17 @@ def _seed_reference_scenario(db_session):
     """Same seed shape as Task 13's test_reconciliation_engine.py reference
     scenario, with a deliberately wrong settlement approved_amount (70000
     instead of the correct 75937.50) so a real discrepancy is produced."""
-    bill = Document(doc_type="bill", filename="bill.pdf", status="indexed")
+    bill = Document(
+        doc_type="bill", filename="bill.pdf", status="indexed",
+        room_rent_per_day=8000.0,
+    )
     policy = Document(doc_type="policy", filename="policy.pdf", status="indexed")
-    settlement = Document(doc_type="settlement", filename="settlement.pdf", status="indexed")
+    settlement = Document(
+        doc_type="settlement", filename="settlement.pdf", status="indexed",
+        settlement_total_claimed=120000.0,
+        settlement_total_approved=70000.0,
+        settlement_total_deducted=50000.0,
+    )
     db_session.add_all([bill, policy, settlement])
     db_session.commit()
 
@@ -123,6 +131,16 @@ def test_reconcile_claim_tool_reports_discrepancy(db_session):
     assert "co_pay_deduction" in payload
     assert isinstance(payload["room_rent_adjustments"], list)
     assert len(payload["room_rent_adjustments"]) > 0
+
+    # docs/design.md Trust & Honesty: "Reconciliation output always shows its
+    # inputs (which number came from which document) so the result is
+    # independently checkable, not a black box."
+    assert payload["inputs"] == {
+        "room_rent_limit_per_day": 5000.0,   # from the policy
+        "co_pay_percentage": 10.0,           # from the policy
+        "sum_insured": 500000.0,             # from the policy
+        "room_rent_charged_per_day": 8000.0, # from the bill
+    }
     for adjustment in payload["room_rent_adjustments"]:
         assert set(adjustment.keys()) == {"description", "original_amount", "eligible_amount", "deduction"}
 

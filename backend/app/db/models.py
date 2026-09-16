@@ -18,6 +18,17 @@ class Document(Base):
     status: Mapped[str] = mapped_column(nullable=False, default="processing")
     uploaded_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
+    # Figures lifted verbatim from the document during structured extraction.
+    # All nullable: they are only populated for the document type they belong
+    # to (room_rent_per_day for bills, the settlement_total_* trio for
+    # settlement letters), and only when the extractor actually found them.
+    # The reconciliation engine prefers these over its own reconstructions and
+    # falls back to heuristics when they are None.
+    room_rent_per_day: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    settlement_total_claimed: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    settlement_total_approved: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    settlement_total_deducted: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+
 
 class Chunk(Base):
     __tablename__ = "chunks"

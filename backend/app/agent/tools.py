@@ -56,6 +56,20 @@ def make_reconcile_claim_tool(session: Session):
             "actual_approved_amount": round(report.actual_approved_amount, 2),
             "discrepancy": round(report.discrepancy, 2),
             "matches": report.matches,
+            # Trust & Honesty (docs/design.md): the reconciliation result must
+            # show which numbers it was computed from — the policy's limits and
+            # the bill's charged room rate — so the user can check the math
+            # themselves instead of taking the output on faith.
+            "inputs": {
+                "room_rent_limit_per_day": (
+                    round(report.room_rent_limit_per_day, 2)
+                    if report.room_rent_limit_per_day is not None
+                    else None
+                ),
+                "co_pay_percentage": round(report.co_pay_percentage, 2),
+                "sum_insured": round(report.sum_insured, 2),
+                "room_rent_charged_per_day": round(report.room_rent_charged_per_day, 2),
+            },
             "room_rent_deduction": round(report.breakdown.room_rent_deduction, 2),
             "co_pay_deduction": round(report.breakdown.co_pay_deduction, 2),
             "room_rent_adjustments": [
