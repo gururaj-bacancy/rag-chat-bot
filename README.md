@@ -2,6 +2,8 @@
 
 A RAG chatbot that helps you understand and verify an Indian health insurance (mediclaim) claim settlement. Upload your hospital bill, your mediclaim policy, and the insurer/TPA's claim settlement letter, then ask why a deduction happened — the bot answers using hybrid document retrieval **and** a deterministic reconciliation engine that recomputes what the settlement should be (including the room-rent-proportionate-deduction math) and flags mismatches against what was actually approved.
 
+![Policy Compare running locally — the reconciliation engine catching a real ₹5,937.50 discrepancy](docs/screenshot.png)
+
 ## Status
 
 Implementation complete — all 22 planned tasks are done. **58 backend tests passing** (1 skipped: the end-to-end test, which needs real API keys) and **13 frontend tests passing**.

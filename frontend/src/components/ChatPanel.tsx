@@ -4,6 +4,14 @@ import { getChatHistory, streamChatMessage } from '../api/client'
 
 const FAILED_TURN_TEXT = 'Sorry, something went wrong.'
 
+function SendIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M4 12h16M13 5l7 7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 export default function ChatPanel() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -68,17 +76,38 @@ export default function ChatPanel() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <h2>Chat</h2>
-      {error && <p role="alert" style={{ color: 'red' }}>{error}</p>}
-      <div style={{ flex: 1, overflowY: 'auto' }}>
+    <div className="chat-container">
+      <div className="chat-header">
+        <h2 className="section-heading">Chat</h2>
+      </div>
+      {error && (
+        <p role="alert" className="alert" style={{ margin: '0 24px 16px' }}>
+          {error}
+        </p>
+      )}
+      <div className="message-list">
+        {messages.length === 0 && (
+          <p className="chat-empty-state">
+            Upload your bill, policy, and settlement letter, then ask a question about your claim
+            to get started.
+          </p>
+        )}
         {messages.map((m, i) => (
-          <div key={i} style={{ marginBottom: 8 }}>
-            <strong>{m.role === 'user' ? 'You' : 'Assistant'}:</strong> {m.content}
+          <div key={i} className={`message message--${m.role}`}>
+            <span className="message-role">{m.role === 'user' ? 'You' : 'Assistant'}</span>
+            {m.role === 'assistant' && m.content === '' ? (
+              <span className="typing-indicator">
+                <span />
+                <span />
+                <span />
+              </span>
+            ) : (
+              <span className="message-text">{m.content}</span>
+            )}
             {m.citations && m.citations.length > 0 && (
-              <ul>
+              <ul className="citation-list">
                 {m.citations.map((c) => (
-                  <li key={c.chunk_id}>
+                  <li key={c.chunk_id} className="citation-chip">
                     [{c.number}] {c.filename} ({c.doc_type}), page {c.page_number}
                   </li>
                 ))}
@@ -87,14 +116,18 @@ export default function ChatPanel() {
           </div>
         ))}
       </div>
-      <div>
+      <div className="chat-input-bar">
         <input
+          className="chat-input"
           placeholder="Ask a question about your claim"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && send()}
         />
-        <button onClick={send}>Send</button>
+        <button className="send-button" onClick={send}>
+          Send
+          <SendIcon />
+        </button>
       </div>
     </div>
   )

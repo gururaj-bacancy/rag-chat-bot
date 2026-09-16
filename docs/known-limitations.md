@@ -29,6 +29,7 @@ Findings surfaced during implementation and the final whole-branch review, delib
 - **No prompt caching** on the stable system-prompt + tool-definitions prefix, despite `docs/design.md` calling for it — the cheapest available cost lever, not yet built.
 - **The reconciliation engine's `return None` branch for "documents present but no extracted data" has no dedicated test** (only "documents missing entirely" is covered).
 - **A single migration file with no version tracking.** Fine while every migration is `IF NOT EXISTS`/`ADD COLUMN IF NOT EXISTS`-idempotent; the first genuinely destructive schema change will need a real migration tool.
+- **No retry/backoff around Voyage API calls.** Confirmed live: a Voyage account with no payment method on file is capped at 3 requests/minute (the 200M free tokens still apply, only the rate is throttled). Uploading three documents back to back consumes that minute's budget, so an immediately-following chat question's `search_docs` call fails with a `RateLimitError` — the agent handles this gracefully today (falls back to `reconcile_claim` alone and says plainly that it couldn't retrieve document text), but there's no automatic retry, so the degraded, uncited answer is what the user sees until the window resets a bit later.
 
 ## Why these were deferred, not fixed
 
