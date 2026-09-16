@@ -5,6 +5,8 @@ from app.ingestion.extraction import (
     BillExtraction,
     LineItemExtraction,
     PolicyRuleExtraction,
+    SettlementExtraction,
+    SettlementLineItemExtraction,
 )
 from app.ingestion.pdf_parser import TextBlock
 from app.ingestion.pipeline import ingest_document
@@ -129,3 +131,112 @@ def test_ingest_document_bill_path(db_session, tmp_path):
     assert (
         db_session.query(PolicyRule).filter_by(document_id=document.id).count() == 0
     )
+
+
+def test_ingest_document_settlement_path(db_session, tmp_path):
+    document = Document(
+        doc_type="settlement", filename="settlement.pdf", status="processing"
+    )
+    db_session.add(document)
+    db_session.commit()
+
+    fake_blocks = [
+        TextBlock(text="CLAIM SETTLEMENT", page_number=1),
+        TextBlock(text="Room rent claimed vs approved amounts.", page_number=1),
+    ]
+    fake_extraction = SettlementExtraction(
+        line_items=[
+            SettlementLineItemExtraction(
+                description="Room rent",
+                claimed_amount=15000.0,
+                approved_amount=12000.0,
+                deducted_amount=3000.0,
+                deduction_reason="Room rent capping as per policy",
+            ),
+        ],
+        total_claimed=15000.0,
+        total_approved=12000.0,
+        total_deducted=3000.0,
+    )
+
+    pdf_path = _write_fake_pdf(tmp_path)
+
+    with (
+        patch(
+            "app.ingestion.pipeline.parse_pdf", return_value=fake_blocks
+        ) as mock_parse,
+        patch(
+            "app.ingestion.pipeline.generate_contextual_text",
+            return_value="Contextualized chunk.",
+        ),
+        patch(
+            "app.ingestion.pipeline.embed_documents",
+            return_value=[FAKE_EMBEDDING],
+        ),
+        patch(
+            "app.ingestion.pipeline.extract_settlement", return_value=fake_extraction
+        ) as mock_extract_settlement,
+    ):
+        ingest_document(db_session, document.id, "settlement", pdf_path)
+
+    mock_parse.assert_called_once_with(pdf_path)
+    mock_extract_settlement.assert_called_once()
+
+    assert document.status == "indexed"
+
+    line_item = db_session.query(LineItem).filter_by(document_id=document.id).one()
+    assert line_item.category == "settlement_line"
+    assert float(line_item.claimed_amount) == 15000.0
+    assert float(line_item.approved_amount) == 12000.0
+    assert float(line_item.deducted_amount) == 3000.0
+    assert line_item.deduction_reason == "Room rent capping as per policy"
+
+    # No policy rule should be created for the settlement path.
+    assert (
+        db_session.query(PolicyRule).filter_by(document_id=document.id).count() == 0
+    )
+
+
+def test_ingest_document_failure_rolls_back_partial_writes(db_session, tmp_path):
+    """If extraction fails after chunks were already staged, the failed
+    attempt's partial writes must be rolled back — not just left uncommitted
+    but actively discarded — before the document is marked 'failed'."""
+    document = Document(doc_type="bill", filename="bad-bill.pdf", status="processing")
+    db_session.add(document)
+    db_session.commit()
+
+    fake_blocks = [
+        TextBlock(text="HOSPITAL BILL", page_number=1),
+        TextBlock(text="Room rent charges for deluxe room.", page_number=1),
+    ]
+
+    pdf_path = _write_fake_pdf(tmp_path)
+
+    with (
+        patch("app.ingestion.pipeline.parse_pdf", return_value=fake_blocks),
+        patch(
+            "app.ingestion.pipeline.generate_contextual_text",
+            return_value="Contextualized chunk.",
+        ),
+        patch(
+            "app.ingestion.pipeline.embed_documents",
+            return_value=[FAKE_EMBEDDING],
+        ),
+        patch(
+            "app.ingestion.pipeline.extract_bill",
+            side_effect=RuntimeError("extraction service unavailable"),
+        ),
+    ):
+        try:
+            ingest_document(db_session, document.id, "bill", pdf_path)
+            assert False, "expected ingest_document to raise"
+        except RuntimeError:
+            pass
+
+    assert document.status == "failed"
+
+    # Chunks were staged (session.add'd) before the failure; the exception
+    # handler's rollback must have discarded them rather than letting the
+    # subsequent status-flip commit persist them.
+    assert db_session.query(Chunk).filter_by(document_id=document.id).count() == 0
+    assert db_session.query(LineItem).filter_by(document_id=document.id).count() == 0

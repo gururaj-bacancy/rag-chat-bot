@@ -88,6 +88,7 @@ def ingest_document(session: Session, document_id: int, doc_type: str, pdf_path:
         ), {"doc_id": document_id})
         session.commit()
     except Exception:
+        session.rollback()
         document.status = "failed"
         session.commit()
         raise
