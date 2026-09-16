@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ChatMessage } from '../types'
 import { getChatHistory, streamChatMessage } from '../api/client'
 
@@ -6,7 +6,6 @@ export default function ChatPanel() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const streamingIndex = useRef<number | null>(null)
 
   useEffect(() => {
     getChatHistory()
@@ -18,27 +17,30 @@ export default function ChatPanel() {
     if (!input.trim()) return
     const userMessage: ChatMessage = { role: 'user', content: input }
     const assistantIndex = messages.length + 1
-    streamingIndex.current = assistantIndex
     setMessages((prev) => [...prev, userMessage, { role: 'assistant', content: '' }])
     setInput('')
 
-    await streamChatMessage(
-      userMessage.content,
-      (token) => {
-        setMessages((prev) => {
-          const next = [...prev]
-          next[assistantIndex] = { ...next[assistantIndex], content: next[assistantIndex].content + token }
-          return next
-        })
-      },
-      (content, citations) => {
-        setMessages((prev) => {
-          const next = [...prev]
-          next[assistantIndex] = { role: 'assistant', content, citations }
-          return next
-        })
-      },
-    )
+    try {
+      await streamChatMessage(
+        userMessage.content,
+        (token) => {
+          setMessages((prev) => {
+            const next = [...prev]
+            next[assistantIndex] = { ...next[assistantIndex], content: next[assistantIndex].content + token }
+            return next
+          })
+        },
+        (content, citations) => {
+          setMessages((prev) => {
+            const next = [...prev]
+            next[assistantIndex] = { role: 'assistant', content, citations }
+            return next
+          })
+        },
+      )
+    } catch (e) {
+      setError((e as Error).message)
+    }
   }
 
   return (
