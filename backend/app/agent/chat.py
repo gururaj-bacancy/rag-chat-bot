@@ -47,10 +47,22 @@ def stream_agent_response(
 
     runner = _client.beta.messages.tool_runner(
         model="claude-opus-5",
-        max_tokens=8192,
+        # Hitting max_tokens is a *terminal, silent* stop reason for the Tool
+        # Runner (see _STOP_REASON_STEPS in anthropic/lib/tools/_beta_runner.py:
+        # "max_tokens" -> "stop"), so a truncated turn reaches the user as a
+        # short answer with no error — potentially cut off mid-`[[chunk_id]]`.
+        # Anthropic's guidance for streaming requests is a large budget for
+        # exactly this reason; timeouts aren't a concern when streaming.
+        max_tokens=64000,
         system=SYSTEM_PROMPT,
         tools=tools,
         messages=messages,
+        # Without server-side fallbacks, a safety-classifier refusal on Opus 5
+        # is also terminal (stop_reason "refusal" -> "stop") and yields zero
+        # tokens — an unexplained dead end. "default" routes by refusal
+        # category, so there is no fallback model list to maintain.
+        betas=["server-side-fallback-2026-07-01"],
+        fallbacks="default",
         stream=True,
     )
     for stream in runner:

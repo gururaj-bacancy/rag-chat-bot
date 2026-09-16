@@ -67,7 +67,14 @@ def test_stream_agent_response_passes_expected_tool_runner_params(db_session):
     assert kwargs["stream"] is True
     assert len(kwargs["tools"]) == 2
     assert kwargs["system"] == SYSTEM_PROMPT
-    assert kwargs["max_tokens"] == 8192
+    # Large budget because max_tokens is a terminal, silent stop reason for the
+    # Tool Runner — a truncated answer reaches the user with no error, possibly
+    # cut off mid-`[[chunk_id]]` citation.
+    assert kwargs["max_tokens"] == 64000
+    # Server-side refusal fallbacks: without these a refusal is terminal and
+    # the user gets zero tokens and no explanation.
+    assert kwargs["betas"] == ["server-side-fallback-2026-07-01"]
+    assert kwargs["fallbacks"] == "default"
 
 
 def test_stream_agent_response_appends_user_message_to_history(db_session):
