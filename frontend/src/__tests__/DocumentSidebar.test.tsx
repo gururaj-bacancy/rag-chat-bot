@@ -37,4 +37,16 @@ describe('DocumentSidebar', () => {
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent("An active 'policy' document already exists...")
   })
+
+  it('shows an error message when delete fails', async () => {
+    vi.spyOn(api, 'deleteDocument').mockRejectedValue(new Error('Delete failed: document is locked'))
+    render(<DocumentSidebar />)
+
+    expect(await screen.findByText('bill.pdf')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /delete bill.pdf/i }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Delete failed: document is locked')
+  })
 })

@@ -28,8 +28,12 @@ export default function DocumentSidebar() {
   }
 
   const handleDelete = async (id: number) => {
-    await deleteDocument(id)
-    await refresh()
+    try {
+      await deleteDocument(id)
+      await refresh()
+    } catch (e) {
+      setError((e as Error).message)
+    }
   }
 
   return (
