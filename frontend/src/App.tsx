@@ -1,4 +1,5 @@
 import DocumentSidebar from './components/DocumentSidebar'
+import ChatPanel from './components/ChatPanel'
 
 export default function App() {
   return (
@@ -7,7 +8,7 @@ export default function App() {
         <DocumentSidebar />
       </aside>
       <main style={{ flex: 1, padding: 16 }}>
-        <h2>Chat</h2>
+        <ChatPanel />
       </main>
     </div>
   )
