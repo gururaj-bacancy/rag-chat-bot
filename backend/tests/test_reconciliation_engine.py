@@ -48,6 +48,12 @@ def _seed_reference_scenario(db_session):
 
 def test_reconcile_claim_reference_scenario_finds_discrepancy(db_session):
     _seed_reference_scenario(db_session)
+    # Force a fresh read from Postgres rather than returning the identity
+    # map's already-loaded Python objects (whose numeric attributes would
+    # still hold whatever plain int/float they were assigned during seeding).
+    # This makes the test genuinely exercise the Decimal->float casts in
+    # engine.py: a real requery returns decimal.Decimal for Numeric columns.
+    db_session.expire_all()
 
     report = reconcile_claim(db_session)
 
