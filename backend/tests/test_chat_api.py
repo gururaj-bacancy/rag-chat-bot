@@ -55,6 +55,7 @@ def _consume_sse(response):
 
 
 def test_post_chat_message_resolves_citations_and_persists(client, db_session):
+    conversation = _seed_conversation(db_session)
     document, chunk = _seed_chunk(db_session)
     raw_tokens = ["The room rent limit is capped. ", f"[[{chunk.id}]]", " That's the clause."]
 
@@ -66,7 +67,9 @@ def test_post_chat_message_resolves_citations_and_persists(client, db_session):
 
     with patch("app.api.chat.stream_agent_response", side_effect=fake_stream) as mock_stream:
         with client.stream(
-            "POST", "/chat/message", json={"message": "Is the room rent capped?"}
+            "POST",
+            "/chat/message",
+            json={"message": "Is the room rent capped?", "conversation_id": conversation.id},
         ) as response:
             assert response.status_code == 200
             events = _consume_sse(response)
@@ -103,9 +106,11 @@ def test_post_chat_message_resolves_citations_and_persists(client, db_session):
     assert user_msg.role == "user"
     assert user_msg.content == "Is the room rent capped?"
     assert user_msg.citations is None
+    assert user_msg.conversation_id == conversation.id
     assert assistant_msg.role == "assistant"
     assert assistant_msg.content == done["content"]
     assert assistant_msg.citations == done["citations"]
+    assert assistant_msg.conversation_id == conversation.id
 
 
 def test_second_message_includes_prior_turns_as_history(client, db_session):
@@ -133,7 +138,9 @@ def test_second_message_includes_prior_turns_as_history(client, db_session):
 
     with patch("app.api.chat.stream_agent_response", side_effect=fake_stream):
         with client.stream(
-            "POST", "/chat/message", json={"message": "second question"}
+            "POST",
+            "/chat/message",
+            json={"message": "second question", "conversation_id": conversation.id},
         ) as response:
             events = _consume_sse(response)
 
@@ -146,6 +153,7 @@ def test_second_message_includes_prior_turns_as_history(client, db_session):
 
 
 def test_citation_numbering_starts_at_one_and_dedupes_repeats(client, db_session):
+    conversation = _seed_conversation(db_session)
     _, chunk_a = _seed_chunk(db_session)
     document_b = Document(doc_type="bill", filename="bill.pdf", status="indexed")
     db_session.add(document_b)
@@ -165,7 +173,9 @@ def test_citation_numbering_starts_at_one_and_dedupes_repeats(client, db_session
 
     with patch("app.api.chat.stream_agent_response", side_effect=fake_stream):
         with client.stream(
-            "POST", "/chat/message", json={"message": "q"}
+            "POST",
+            "/chat/message",
+            json={"message": "q", "conversation_id": conversation.id},
         ) as response:
             events = _consume_sse(response)
 
@@ -192,6 +202,8 @@ def test_citation_numbering_starts_at_one_and_dedupes_repeats(client, db_session
 
 
 def test_unresolvable_citation_marker_is_dropped(client, db_session):
+    conversation = _seed_conversation(db_session)
+
     def fake_stream(session, history, user_message):
         yield "Some answer "
         yield "[[999999]]"
@@ -199,7 +211,9 @@ def test_unresolvable_citation_marker_is_dropped(client, db_session):
 
     with patch("app.api.chat.stream_agent_response", side_effect=fake_stream):
         with client.stream(
-            "POST", "/chat/message", json={"message": "test"}
+            "POST",
+            "/chat/message",
+            json={"message": "test", "conversation_id": conversation.id},
         ) as response:
             events = _consume_sse(response)
 
@@ -224,7 +238,7 @@ def test_get_chat_history_returns_persisted_messages_in_order(client, db_session
     )
     db_session.commit()
 
-    response = client.get("/chat/history")
+    response = client.get(f"/chat/history?conversation_id={conversation.id}")
 
     assert response.status_code == 200
     body = response.json()
@@ -244,13 +258,17 @@ def test_stream_failure_emits_error_event_and_persists_only_the_user_message(cli
     own message stays persisted (they did ask it); no assistant row is written
     for the broken answer."""
 
+    conversation = _seed_conversation(db_session)
+
     def failing_stream(session, history, user_message):
         yield "Let me check your policy"
         raise RuntimeError("upstream API error: connection reset")
 
     with patch("app.api.chat.stream_agent_response", side_effect=failing_stream):
         with client.stream(
-            "POST", "/chat/message", json={"message": "Why was my claim reduced?"}
+            "POST",
+            "/chat/message",
+            json={"message": "Why was my claim reduced?", "conversation_id": conversation.id},
         ) as response:
             assert response.status_code == 200
             events = _consume_sse(response)
@@ -275,12 +293,18 @@ def test_stream_failure_before_any_token_still_emits_error_event(client, db_sess
     first API call is rejected); the stream must still be a well-formed SSE
     response ending in an error event, not an empty body."""
 
+    conversation = _seed_conversation(db_session)
+
     def failing_stream(session, history, user_message):
         raise RuntimeError("rate limited")
         yield  # pragma: no cover - makes this a generator function
 
     with patch("app.api.chat.stream_agent_response", side_effect=failing_stream):
-        with client.stream("POST", "/chat/message", json={"message": "hi"}) as response:
+        with client.stream(
+            "POST",
+            "/chat/message",
+            json={"message": "hi", "conversation_id": conversation.id},
+        ) as response:
             assert response.status_code == 200
             events = _consume_sse(response)
 
@@ -290,3 +314,97 @@ def test_stream_failure_before_any_token_still_emits_error_event(client, db_sess
 
     messages = db_session.query(Message).order_by(Message.id).all()
     assert [m.role for m in messages] == ["user"]
+
+
+def test_post_chat_message_requires_conversation_id(client, db_session):
+    response = client.post("/chat/message", json={"message": "hi, no conversation_id"})
+    assert response.status_code == 422
+
+
+def test_post_conversations_creates_empty_conversation_with_title(client, db_session):
+    response = client.post("/chat/conversations")
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["title"] == "New conversation"
+    assert body["created_at"] is not None
+
+    stored = db_session.query(Conversation).filter_by(id=body["id"]).one()
+    assert stored.id == body["id"]
+    # A freshly created conversation has no messages yet.
+    assert db_session.query(Message).filter_by(conversation_id=stored.id).count() == 0
+
+
+def test_get_conversations_lists_most_recent_first_with_derived_titles(client, db_session):
+    conv_a = _seed_conversation(db_session)
+    conv_b = _seed_conversation(db_session)
+
+    db_session.add(
+        Message(
+            role="user",
+            content="A" * 60,  # longer than 50 chars to exercise truncation
+            conversation_id=conv_a.id,
+        )
+    )
+    db_session.add(Message(role="user", content="short question", conversation_id=conv_b.id))
+    db_session.commit()
+
+    # A second message in conversation A must not affect its title: the
+    # title is derived from the EARLIEST message (lowest id), not the latest.
+    db_session.add(
+        Message(role="assistant", content="an answer, not the title", conversation_id=conv_a.id)
+    )
+    db_session.commit()
+
+    conv_c = _seed_conversation(db_session)  # empty, no messages at all
+
+    response = client.get("/chat/conversations")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [c["id"] for c in body] == [conv_c.id, conv_b.id, conv_a.id]
+
+    by_id = {c["id"]: c for c in body}
+    assert by_id[conv_a.id]["title"] == "A" * 50
+    assert by_id[conv_b.id]["title"] == "short question"
+    assert by_id[conv_c.id]["title"] == "New conversation"
+
+
+def test_chat_history_is_scoped_per_conversation(client, db_session):
+    create_a = client.post("/chat/conversations")
+    create_b = client.post("/chat/conversations")
+    conversation_a_id = create_a.json()["id"]
+    conversation_b_id = create_b.json()["id"]
+
+    def fake_stream_a(session, history, user_message):
+        yield "answer for conversation a"
+
+    with patch("app.api.chat.stream_agent_response", side_effect=fake_stream_a):
+        with client.stream(
+            "POST",
+            "/chat/message",
+            json={"message": "question for a", "conversation_id": conversation_a_id},
+        ) as response:
+            _consume_sse(response)
+
+    def fake_stream_b(session, history, user_message):
+        yield "answer for conversation b"
+
+    with patch("app.api.chat.stream_agent_response", side_effect=fake_stream_b):
+        with client.stream(
+            "POST",
+            "/chat/message",
+            json={"message": "question for b", "conversation_id": conversation_b_id},
+        ) as response:
+            _consume_sse(response)
+
+    history_a = client.get(f"/chat/history?conversation_id={conversation_a_id}").json()
+    history_b = client.get(f"/chat/history?conversation_id={conversation_b_id}").json()
+
+    assert [m["content"] for m in history_a] == ["question for a", "answer for conversation a"]
+    assert [m["content"] for m in history_b] == ["question for b", "answer for conversation b"]
+
+    # Neither conversation's history leaks content that belongs to the other.
+    history_a_contents = {m["content"] for m in history_a}
+    history_b_contents = {m["content"] for m in history_b}
+    assert history_a_contents.isdisjoint(history_b_contents)

@@ -4,6 +4,7 @@ import re
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import text
 
 from app.agent.chat import stream_agent_response
 
@@ -25,21 +26,7 @@ CITATION_PATTERN = re.compile(r"\[\[(\d+)\]\]")
 
 class ChatRequest(BaseModel):
     message: str
-
-
-def _get_or_create_default_conversation(session) -> Conversation:
-    """Temporary shim, pending Task 2: `messages.conversation_id` is NOT NULL
-    (every message belongs to a conversation) but this endpoint has no
-    conversation-selection API yet, so every message is filed under a single
-    reused conversation (the oldest one, creating it on first use) to
-    preserve today's single-thread chat behavior. Task 2 replaces this with
-    real per-conversation routing (a `conversation_id` on the request)."""
-    conversation = session.query(Conversation).order_by(Conversation.id).first()
-    if conversation is None:
-        conversation = Conversation()
-        session.add(conversation)
-        session.commit()
-    return conversation
+    conversation_id: int
 
 
 def _resolve_citations(session, raw_text: str) -> tuple[str, list[dict]]:
@@ -95,13 +82,19 @@ def post_chat_message(request: ChatRequest):
 
     def event_stream():
         try:
-            conversation = _get_or_create_default_conversation(session)
             history = [
                 {"role": m.role, "content": m.content}
-                for m in session.query(Message).order_by(Message.id).all()
+                for m in session.query(Message)
+                .filter(Message.conversation_id == request.conversation_id)
+                .order_by(Message.id)
+                .all()
             ]
             session.add(
-                Message(role="user", content=request.message, conversation_id=conversation.id)
+                Message(
+                    role="user",
+                    content=request.message,
+                    conversation_id=request.conversation_id,
+                )
             )
             session.commit()
 
@@ -132,7 +125,7 @@ def post_chat_message(request: ChatRequest):
                     role="assistant",
                     content=cleaned_text,
                     citations=citations,
-                    conversation_id=conversation.id,
+                    conversation_id=request.conversation_id,
                 )
             )
             session.commit()
@@ -148,13 +141,63 @@ def post_chat_message(request: ChatRequest):
 
 
 @router.get("/history")
-def get_chat_history():
+def get_chat_history(conversation_id: int):
     session = db_session_module.get_session()
     try:
-        messages = session.query(Message).order_by(Message.id).all()
+        messages = (
+            session.query(Message)
+            .filter(Message.conversation_id == conversation_id)
+            .order_by(Message.id)
+            .all()
+        )
         return [
             {"id": m.id, "role": m.role, "content": m.content, "citations": m.citations}
             for m in messages
         ]
+    finally:
+        session.close()
+
+
+@router.get("/conversations")
+def list_conversations():
+    # Raw SQL (not the ORM query builder) for the same reason as
+    # app/retrieval/hybrid_search.py: a LATERAL join to pull just the
+    # earliest message per conversation isn't expressible as a plain
+    # SQLAlchemy ORM query. `conversation_id` and `content` are static
+    # column names, not user input, so this is not a f-string/injection
+    # concern.
+    session = db_session_module.get_session()
+    try:
+        rows = session.execute(
+            text(
+                "SELECT c.id, c.created_at, "
+                "COALESCE(LEFT(first_msg.content, 50), 'New conversation') AS title "
+                "FROM conversations c "
+                "LEFT JOIN LATERAL ("
+                "    SELECT content FROM messages "
+                "    WHERE messages.conversation_id = c.id "
+                "    ORDER BY id ASC LIMIT 1"
+                ") first_msg ON true "
+                "ORDER BY c.created_at DESC"
+            )
+        ).fetchall()
+        return [{"id": row.id, "title": row.title, "created_at": row.created_at} for row in rows]
+    finally:
+        session.close()
+
+
+@router.post("/conversations", status_code=201)
+def create_conversation():
+    session = db_session_module.get_session()
+    try:
+        conversation = Conversation()
+        session.add(conversation)
+        session.commit()
+        session.refresh(conversation)
+        return {
+            "id": conversation.id,
+            "created_at": conversation.created_at,
+            "title": "New conversation",
+        }
     finally:
         session.close()
