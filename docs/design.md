@@ -1,4 +1,4 @@
-# Policy Compare — RAG Chatbot Design
+# ClaimAudit — RAG Chatbot Design
 
 ## Overview
 

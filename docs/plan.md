@@ -1,4 +1,4 @@
-# Policy Compare Implementation Plan
+# ClaimAudit Implementation Plan
 
 **Goal:** RAG chatbot that ingests a hospital bill, mediclaim policy, and claim settlement letter, then answers questions using hybrid document retrieval plus a deterministic reconciliation engine that recomputes the settlement and flags mismatches.
 

@@ -35,7 +35,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <h1 className="app-title">Policy Compare</h1>
+        <h1 className="app-title">ClaimAudit</h1>
         <p className="app-tagline">Understand and verify your mediclaim settlement</p>
         <button
           className="theme-toggle"

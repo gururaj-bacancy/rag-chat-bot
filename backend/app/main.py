@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.chat import router as chat_router
 from app.api.documents import router as documents_router
 
-app = FastAPI(title="Policy Compare")
+app = FastAPI(title="ClaimAudit")
 
 app.add_middleware(
     CORSMiddleware,
