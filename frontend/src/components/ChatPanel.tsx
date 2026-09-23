@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import type { ChatMessage } from '../types'
-import { getChatHistory, streamChatMessage } from '../api/client'
+import type { ChatMessage, Conversation } from '../types'
+import { createConversation, getChatHistory, listConversations, streamChatMessage } from '../api/client'
 
 const FAILED_TURN_TEXT = 'Sorry, something went wrong.'
 
@@ -12,19 +12,88 @@ function SendIcon() {
   )
 }
 
+/**
+ * Renders an ISO timestamp as a short relative label ("5 minutes ago", "just
+ * now", "3 days ago") for the history dropdown, rounding to the largest
+ * sensible unit.
+ */
+function formatRelativeTime(isoString: string): string {
+  const diffSeconds = Math.round((new Date(isoString).getTime() - Date.now()) / 1000)
+  const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
+
+  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+    ['year', 60 * 60 * 24 * 365],
+    ['month', 60 * 60 * 24 * 30],
+    ['day', 60 * 60 * 24],
+    ['hour', 60 * 60],
+    ['minute', 60],
+  ]
+
+  for (const [unit, secondsInUnit] of units) {
+    if (Math.abs(diffSeconds) >= secondsInUnit) {
+      return rtf.format(Math.round(diffSeconds / secondsInUnit), unit)
+    }
+  }
+  return rtf.format(diffSeconds, 'second')
+}
+
 export default function ChatPanel() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [currentConversationId, setCurrentConversationId] = useState<number | null>(null)
+  const [conversations, setConversations] = useState<Conversation[]>([])
+  const [historyOpen, setHistoryOpen] = useState(false)
 
   useEffect(() => {
-    getChatHistory()
-      .then(setMessages)
+    listConversations()
+      .then((convos) => {
+        setConversations(convos)
+        if (convos.length > 0) {
+          const [mostRecent] = convos
+          setCurrentConversationId(mostRecent.id)
+          return getChatHistory(mostRecent.id).then(setMessages)
+        }
+        return createConversation().then((created) => {
+          setCurrentConversationId(created.id)
+        })
+      })
       .catch((e) => setError((e as Error).message))
   }, [])
 
+  const handleNewChat = () => {
+    createConversation()
+      .then((created) => {
+        setMessages([])
+        setCurrentConversationId(created.id)
+        setHistoryOpen(false)
+      })
+      .catch((e) => setError((e as Error).message))
+  }
+
+  const toggleHistory = () => {
+    const next = !historyOpen
+    setHistoryOpen(next)
+    if (next) {
+      listConversations()
+        .then(setConversations)
+        .catch((e) => setError((e as Error).message))
+    }
+  }
+
+  const selectConversation = (conversation: Conversation) => {
+    getChatHistory(conversation.id)
+      .then((history) => {
+        setMessages(history)
+        setCurrentConversationId(conversation.id)
+        setHistoryOpen(false)
+      })
+      .catch((e) => setError((e as Error).message))
+  }
+
   const send = async () => {
-    if (!input.trim()) return
+    if (!input.trim() || currentConversationId === null) return
+    const conversationId = currentConversationId
     const userMessage: ChatMessage = { role: 'user', content: input }
     const assistantIndex = messages.length + 1
     setMessages((prev) => [...prev, userMessage, { role: 'assistant', content: '' }])
@@ -49,6 +118,7 @@ export default function ChatPanel() {
 
     try {
       await streamChatMessage(
+        conversationId,
         userMessage.content,
         (token) => {
           setMessages((prev) => {
@@ -78,7 +148,37 @@ export default function ChatPanel() {
   return (
     <div className="chat-container">
       <div className="chat-header">
-        <h2 className="section-heading">Chat</h2>
+        <div className="chat-header-row">
+          <h2 className="section-heading">Chat</h2>
+          <div className="chat-header-actions">
+            <button className="chat-action-button" onClick={handleNewChat}>
+              New Chat
+            </button>
+            <div className="history-menu">
+              <button className="chat-action-button" onClick={toggleHistory}>
+                History
+              </button>
+              {historyOpen && (
+                <ul className="history-dropdown">
+                  {conversations.length === 0 && <li className="history-empty">No conversations yet.</li>}
+                  {conversations.map((c) => (
+                    <li key={c.id}>
+                      <button
+                        className={
+                          c.id === currentConversationId ? 'history-item history-item--active' : 'history-item'
+                        }
+                        onClick={() => selectConversation(c)}
+                      >
+                        <span className="history-item-title">{c.title}</span>
+                        <span className="history-item-time">{formatRelativeTime(c.created_at)}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
       {error && (
         <p role="alert" className="alert" style={{ margin: '0 24px 16px' }}>

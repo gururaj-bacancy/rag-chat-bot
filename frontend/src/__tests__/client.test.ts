@@ -38,7 +38,7 @@ describe('api client error handling', () => {
 
   it('getChatHistory rejects with the detail message on a non-2xx response', async () => {
     mockFetch({ ok: false, status: 503, statusText: 'Service Unavailable', json: async () => ({ detail: 'unavailable' }) })
-    await expect(getChatHistory()).rejects.toThrow('unavailable')
+    await expect(getChatHistory(1)).rejects.toThrow('unavailable')
   })
 
   it('falls back to statusText when the error body is not JSON', async () => {

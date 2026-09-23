@@ -1,11 +1,23 @@
-import { render, screen, fireEvent, act } from '@testing-library/react'
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import ChatPanel from '../components/ChatPanel'
 import * as api from '../api/client'
-import type { Citation } from '../types'
+import type { Citation, Conversation } from '../types'
+
+const DEFAULT_CONVERSATION: Conversation = {
+  id: 1,
+  title: 'New conversation',
+  created_at: '2026-09-24T12:00:00Z',
+}
 
 beforeEach(() => {
+  vi.spyOn(api, 'listConversations').mockResolvedValue([DEFAULT_CONVERSATION])
   vi.spyOn(api, 'getChatHistory').mockResolvedValue([])
+  vi.spyOn(api, 'createConversation').mockResolvedValue({
+    id: 2,
+    title: 'New conversation',
+    created_at: '2026-09-24T12:05:00Z',
+  })
 })
 
 describe('ChatPanel', () => {
@@ -19,7 +31,7 @@ describe('ChatPanel', () => {
     let capturedOnToken!: (text: string) => void
     let capturedOnDone!: (content: string, citations: Citation[]) => void
     let resolveStream!: () => void
-    vi.spyOn(api, 'streamChatMessage').mockImplementation((_msg, onToken, onDone) => {
+    vi.spyOn(api, 'streamChatMessage').mockImplementation((_conversationId, _msg, onToken, onDone) => {
       capturedOnToken = onToken
       capturedOnDone = onDone
       return new Promise<void>((resolve) => {
@@ -27,8 +39,9 @@ describe('ChatPanel', () => {
       })
     })
     render(<ChatPanel />)
-    // Let the mount-time getChatHistory() promise settle before interacting, so its
-    // resolution doesn't land after send()'s synchronous state updates and stomp on them.
+    // Let the mount-time listConversations()/getChatHistory() promises settle before
+    // interacting, so their resolution doesn't land after send()'s synchronous state
+    // updates and stomp on them.
     await screen.findByPlaceholderText(/ask a question/i)
 
     fireEvent.change(screen.getByPlaceholderText(/ask a question/i), { target: { value: 'Why?' } })
@@ -84,7 +97,7 @@ describe('ChatPanel', () => {
     let capturedOnToken!: (text: string) => void
     let capturedOnError!: (message: string) => void
     vi.spyOn(api, 'streamChatMessage').mockImplementation(
-      async (_msg, onToken, _onDone, onError) => {
+      async (_conversationId, _msg, onToken, _onDone, onError) => {
         capturedOnToken = onToken
         capturedOnError = onError!
       },
@@ -120,5 +133,65 @@ describe('ChatPanel', () => {
 
     expect(await screen.findByText(/What is my deductible\?/)).toBeInTheDocument()
     expect(await screen.findByText(/Your deductible is \$500\./)).toBeInTheDocument()
+  })
+
+  it('starts a new conversation, clearing the transcript', async () => {
+    vi.spyOn(api, 'getChatHistory').mockResolvedValueOnce([
+      { id: 1, role: 'user', content: 'Old question' },
+      { id: 2, role: 'assistant', content: 'Old answer' },
+    ])
+    const created: Conversation = { id: 7, title: 'New conversation', created_at: '2026-09-24T13:00:00Z' }
+    const createConversationMock = vi.spyOn(api, 'createConversation').mockResolvedValue(created)
+
+    render(<ChatPanel />)
+    expect(await screen.findByText(/Old question/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /new chat/i }))
+
+    await waitFor(() => expect(createConversationMock).toHaveBeenCalled())
+    expect(screen.queryByText(/Old question/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Old answer/)).not.toBeInTheDocument()
+    expect(screen.getByText(/upload your bill/i)).toBeInTheDocument()
+  })
+
+  it('opens history and switches to a selected conversation', async () => {
+    const conversations: Conversation[] = [
+      { id: 1, title: 'Current chat', created_at: '2026-09-24T12:00:00Z' },
+      { id: 5, title: 'Deductible question', created_at: '2026-09-20T09:00:00Z' },
+    ]
+    vi.spyOn(api, 'listConversations').mockResolvedValue(conversations)
+    const getChatHistoryMock = vi.spyOn(api, 'getChatHistory').mockImplementation((id: number) =>
+      Promise.resolve(
+        id === 5 ? [{ id: 10, role: 'assistant' as const, content: 'Your deductible is $500.' }] : [],
+      ),
+    )
+
+    render(<ChatPanel />)
+    await screen.findByPlaceholderText(/ask a question/i)
+
+    fireEvent.click(screen.getByRole('button', { name: /history/i }))
+    const historyRow = await screen.findByText(/Deductible question/i)
+    fireEvent.click(historyRow)
+
+    await waitFor(() => expect(getChatHistoryMock).toHaveBeenCalledWith(5))
+    expect(await screen.findByText(/Your deductible is \$500\./)).toBeInTheDocument()
+  })
+
+  it('passes the currently selected conversation id to streamChatMessage', async () => {
+    const created: Conversation = { id: 9, title: 'New conversation', created_at: '2026-09-24T14:00:00Z' }
+    vi.spyOn(api, 'createConversation').mockResolvedValue(created)
+    const streamChatMessageMock = vi.spyOn(api, 'streamChatMessage').mockResolvedValue(undefined)
+
+    render(<ChatPanel />)
+    await screen.findByPlaceholderText(/ask a question/i)
+
+    fireEvent.click(screen.getByRole('button', { name: /new chat/i }))
+    await waitFor(() => expect(screen.getByPlaceholderText(/ask a question/i)).toBeInTheDocument())
+
+    fireEvent.change(screen.getByPlaceholderText(/ask a question/i), { target: { value: 'Why?' } })
+    fireEvent.click(screen.getByRole('button', { name: /send/i }))
+
+    await waitFor(() => expect(streamChatMessageMock).toHaveBeenCalled())
+    expect(streamChatMessageMock.mock.calls[0][0]).toBe(9)
   })
 })
