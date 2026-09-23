@@ -178,7 +178,7 @@ def list_conversations():
                 "    WHERE messages.conversation_id = c.id "
                 "    ORDER BY id ASC LIMIT 1"
                 ") first_msg ON true "
-                "ORDER BY c.created_at DESC"
+                "ORDER BY c.created_at DESC, c.id DESC"
             )
         ).fetchall()
         return [{"id": row.id, "title": row.title, "created_at": row.created_at} for row in rows]

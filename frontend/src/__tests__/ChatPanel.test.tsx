@@ -177,6 +177,54 @@ describe('ChatPanel', () => {
     expect(await screen.findByText(/Your deductible is \$500\./)).toBeInTheDocument()
   })
 
+  it('discards a stale stream token that arrives after New Chat was clicked mid-stream, without crashing', async () => {
+    // Reproduces the Critical whole-branch-review finding: send() captures
+    // `assistantIndex` once, up front. If the user clicks New Chat (or
+    // switches via History) before the in-flight stream's onToken/onDone
+    // fires, that callback still closes over the old `assistantIndex` and
+    // the old `messages` array shape. New Chat resets `messages` to `[]`, so
+    // the stale index (2, for the very first message of a conversation) is
+    // now out of bounds — writing into it unguarded throws inside the
+    // setMessages updater, which (with no error boundary anywhere in this
+    // app) would unmount the whole React root. This test proves the fix:
+    // the token is dropped silently and the app keeps rendering the new,
+    // now-active conversation's own empty transcript.
+    let capturedOnToken!: (text: string) => void
+    let capturedOnDone!: (content: string, citations: Citation[]) => void
+    vi.spyOn(api, 'streamChatMessage').mockImplementation((_conversationId, _msg, onToken, onDone) => {
+      capturedOnToken = onToken
+      capturedOnDone = onDone
+      return new Promise<void>(() => {
+        // Deliberately never resolves — the stream is still "in flight" from
+        // the component's point of view when New Chat is clicked below.
+      })
+    })
+
+    render(<ChatPanel />)
+    await screen.findByPlaceholderText(/ask a question/i)
+
+    fireEvent.change(screen.getByPlaceholderText(/ask a question/i), { target: { value: 'Why?' } })
+    fireEvent.click(screen.getByRole('button', { name: /send/i }))
+    expect(capturedOnToken).toBeDefined()
+
+    // Switch conversations while the stream above is still in flight — this
+    // resets `messages` to `[]`, shorter than the `assistantIndex` (2) the
+    // stale callbacks above were closed over.
+    fireEvent.click(screen.getByRole('button', { name: /new chat/i }))
+    await waitFor(() => expect(screen.getByText(/upload your bill/i)).toBeInTheDocument())
+
+    // Firing the stale callbacks must not throw (and must not resurrect the
+    // old conversation's message into the new, empty transcript).
+    expect(() => act(() => capturedOnToken('stale token'))).not.toThrow()
+    expect(() => act(() => capturedOnDone('stale content', []))).not.toThrow()
+
+    // The app is still alive and showing the new conversation's empty state,
+    // not corrupted by the stale write.
+    expect(screen.getByText(/upload your bill/i)).toBeInTheDocument()
+    expect(screen.queryByText(/stale token/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/stale content/)).not.toBeInTheDocument()
+  })
+
   it('passes the currently selected conversation id to streamChatMessage', async () => {
     const created: Conversation = { id: 9, title: 'New conversation', created_at: '2026-09-24T14:00:00Z' }
     vi.spyOn(api, 'createConversation').mockResolvedValue(created)

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ChatMessage, Conversation } from '../types'
 import { createConversation, getChatHistory, listConversations, streamChatMessage } from '../api/client'
 
@@ -45,17 +45,33 @@ export default function ChatPanel() {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [historyOpen, setHistoryOpen] = useState(false)
 
+  // Mirrors `currentConversationId` so the streaming callbacks captured inside
+  // `send()` can check it synchronously. Those callbacks close over the
+  // conversation id active when their stream started; if `send()` compared
+  // against the `currentConversationId` state instead, the closure would see
+  // whatever value was current at render time, not the latest one. Routing
+  // every conversation change through `setActiveConversation` keeps this ref
+  // current so a callback that fires after a New Chat / History switch can
+  // tell its conversation is no longer active and discard its update instead
+  // of writing into (or crashing on) a transcript that now belongs to a
+  // different conversation.
+  const currentConversationIdRef = useRef<number | null>(null)
+  const setActiveConversation = (id: number | null) => {
+    currentConversationIdRef.current = id
+    setCurrentConversationId(id)
+  }
+
   useEffect(() => {
     listConversations()
       .then((convos) => {
         setConversations(convos)
         if (convos.length > 0) {
           const [mostRecent] = convos
-          setCurrentConversationId(mostRecent.id)
+          setActiveConversation(mostRecent.id)
           return getChatHistory(mostRecent.id).then(setMessages)
         }
         return createConversation().then((created) => {
-          setCurrentConversationId(created.id)
+          setActiveConversation(created.id)
         })
       })
       .catch((e) => setError((e as Error).message))
@@ -65,7 +81,7 @@ export default function ChatPanel() {
     createConversation()
       .then((created) => {
         setMessages([])
-        setCurrentConversationId(created.id)
+        setActiveConversation(created.id)
         setHistoryOpen(false)
       })
       .catch((e) => setError((e as Error).message))
@@ -85,7 +101,7 @@ export default function ChatPanel() {
     getChatHistory(conversation.id)
       .then((history) => {
         setMessages(history)
-        setCurrentConversationId(conversation.id)
+        setActiveConversation(conversation.id)
         setHistoryOpen(false)
       })
       .catch((e) => setError((e as Error).message))
@@ -121,16 +137,30 @@ export default function ChatPanel() {
         conversationId,
         userMessage.content,
         (token) => {
+          // Discard tokens that arrive after the user has switched away from
+          // `conversationId` (New Chat / History while this stream was still
+          // in flight) — `messages` now belongs to a different conversation,
+          // and this stream's own backend write already used the
+          // `conversationId` captured above, so the server-side result stays
+          // correct either way. The `next[assistantIndex]` bounds check is a
+          // second, independent guard (e.g. a rapid double-switch), not a
+          // substitute for the conversation check above.
+          if (currentConversationIdRef.current !== conversationId) return
           setMessages((prev) => {
             const next = [...prev]
-            next[assistantIndex] = { ...next[assistantIndex], content: next[assistantIndex].content + token }
+            if (next[assistantIndex]) {
+              next[assistantIndex] = { ...next[assistantIndex], content: next[assistantIndex].content + token }
+            }
             return next
           })
         },
         (content, citations) => {
+          if (currentConversationIdRef.current !== conversationId) return
           setMessages((prev) => {
             const next = [...prev]
-            next[assistantIndex] = { role: 'assistant', content, citations }
+            if (next[assistantIndex]) {
+              next[assistantIndex] = { role: 'assistant', content, citations }
+            }
             return next
           })
         },

@@ -6,7 +6,7 @@ A RAG chatbot that helps you understand and verify an Indian health insurance (m
 
 ## Status
 
-Implementation complete — all 22 planned tasks are done. **58 backend tests passing** (1 skipped: the end-to-end test, which needs real API keys) and **13 frontend tests passing**.
+Implementation complete — all 22 planned tasks are done. **66 backend tests passing** (1 skipped: the end-to-end test, which needs real API keys) and **27 frontend tests passing**.
 
 - [docs/design.md](docs/design.md) — architecture, data flow, reconciliation engine design, trust/honesty rules
 - [docs/plan.md](docs/plan.md) — task-by-task implementation roadmap

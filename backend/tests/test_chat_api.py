@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 import pytest
@@ -368,6 +369,30 @@ def test_get_conversations_lists_most_recent_first_with_derived_titles(client, d
     assert by_id[conv_a.id]["title"] == "A" * 50
     assert by_id[conv_b.id]["title"] == "short question"
     assert by_id[conv_c.id]["title"] == "New conversation"
+
+
+def test_get_conversations_orders_by_id_desc_when_created_at_ties(client, db_session):
+    """Two conversations created at the exact same instant (a `created_at`
+    tie) must still sort deterministically, by id descending, rather than in
+    unspecified order — regressions here would make the conversation list
+    (and therefore which entry the History dropdown shows as "current")
+    reorder unpredictably across requests."""
+    same_instant = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    conv_first = Conversation(created_at=same_instant)
+    db_session.add(conv_first)
+    db_session.commit()
+
+    conv_second = Conversation(created_at=same_instant)
+    db_session.add(conv_second)
+    db_session.commit()
+
+    assert conv_first.created_at == conv_second.created_at  # the tie this test relies on
+
+    response = client.get("/chat/conversations")
+
+    assert response.status_code == 200
+    ids = [c["id"] for c in response.json() if c["id"] in (conv_first.id, conv_second.id)]
+    assert ids == [conv_second.id, conv_first.id]
 
 
 def test_chat_history_is_scoped_per_conversation(client, db_session):
