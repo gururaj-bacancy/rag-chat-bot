@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.db import session as db_session_module
-from app.db.models import Chunk, Document, Message
+from app.db.models import Chunk, Conversation, Document, Message
 from app.main import app
 
 
@@ -19,6 +19,13 @@ def client(db_session):
     """
     with patch.object(db_session_module, "get_session", return_value=db_session):
         yield TestClient(app)
+
+
+def _seed_conversation(db_session):
+    conversation = Conversation()
+    db_session.add(conversation)
+    db_session.commit()
+    return conversation
 
 
 def _seed_chunk(db_session):
@@ -102,10 +109,16 @@ def test_post_chat_message_resolves_citations_and_persists(client, db_session):
 
 
 def test_second_message_includes_prior_turns_as_history(client, db_session):
+    conversation = _seed_conversation(db_session)
     db_session.add_all(
         [
-            Message(role="user", content="first question"),
-            Message(role="assistant", content="first answer", citations=[]),
+            Message(role="user", content="first question", conversation_id=conversation.id),
+            Message(
+                role="assistant",
+                content="first answer",
+                citations=[],
+                conversation_id=conversation.id,
+            ),
         ]
     )
     db_session.commit()
@@ -197,10 +210,16 @@ def test_unresolvable_citation_marker_is_dropped(client, db_session):
 
 
 def test_get_chat_history_returns_persisted_messages_in_order(client, db_session):
+    conversation = _seed_conversation(db_session)
     db_session.add_all(
         [
-            Message(role="user", content="hello"),
-            Message(role="assistant", content="hi there", citations=[]),
+            Message(role="user", content="hello", conversation_id=conversation.id),
+            Message(
+                role="assistant",
+                content="hi there",
+                citations=[],
+                conversation_id=conversation.id,
+            ),
         ]
     )
     db_session.commit()

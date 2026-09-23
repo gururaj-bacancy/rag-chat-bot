@@ -16,7 +16,7 @@ from app.agent.chat import stream_agent_response
 # (`db_session_module.get_session()`) instead resolves the current
 # `SessionLocal` at call time, and lets tests `patch.object` it.
 from app.db import session as db_session_module
-from app.db.models import Chunk, Document, Message
+from app.db.models import Chunk, Conversation, Document, Message
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -25,6 +25,21 @@ CITATION_PATTERN = re.compile(r"\[\[(\d+)\]\]")
 
 class ChatRequest(BaseModel):
     message: str
+
+
+def _get_or_create_default_conversation(session) -> Conversation:
+    """Temporary shim, pending Task 2: `messages.conversation_id` is NOT NULL
+    (every message belongs to a conversation) but this endpoint has no
+    conversation-selection API yet, so every message is filed under a single
+    reused conversation (the oldest one, creating it on first use) to
+    preserve today's single-thread chat behavior. Task 2 replaces this with
+    real per-conversation routing (a `conversation_id` on the request)."""
+    conversation = session.query(Conversation).order_by(Conversation.id).first()
+    if conversation is None:
+        conversation = Conversation()
+        session.add(conversation)
+        session.commit()
+    return conversation
 
 
 def _resolve_citations(session, raw_text: str) -> tuple[str, list[dict]]:
@@ -80,11 +95,14 @@ def post_chat_message(request: ChatRequest):
 
     def event_stream():
         try:
+            conversation = _get_or_create_default_conversation(session)
             history = [
                 {"role": m.role, "content": m.content}
                 for m in session.query(Message).order_by(Message.id).all()
             ]
-            session.add(Message(role="user", content=request.message))
+            session.add(
+                Message(role="user", content=request.message, conversation_id=conversation.id)
+            )
             session.commit()
 
             raw_chunks = []
@@ -109,7 +127,14 @@ def post_chat_message(request: ChatRequest):
             raw_text = "".join(raw_chunks)
             cleaned_text, citations = _resolve_citations(session, raw_text)
 
-            session.add(Message(role="assistant", content=cleaned_text, citations=citations))
+            session.add(
+                Message(
+                    role="assistant",
+                    content=cleaned_text,
+                    citations=citations,
+                    conversation_id=conversation.id,
+                )
+            )
             session.commit()
 
             yield f"data: {json.dumps({'type': 'done', 'content': cleaned_text, 'citations': citations})}\n\n"
