@@ -1,4 +1,4 @@
-import type { DocumentRecord, ChatMessage, Citation } from '../types'
+import type { DocumentRecord, ChatMessage, Citation, Conversation } from '../types'
 
 /**
  * Throws on any non-2xx response instead of handing the caller an error body.
@@ -34,12 +34,23 @@ export async function deleteDocument(id: number): Promise<void> {
   await handleResponse(await fetch(`/documents/${id}`, { method: 'DELETE' }))
 }
 
-export async function getChatHistory(): Promise<ChatMessage[]> {
-  const res = await handleResponse(await fetch('/chat/history'))
+export async function listConversations(): Promise<Conversation[]> {
+  const res = await handleResponse(await fetch('/chat/conversations'))
+  return res.json()
+}
+
+export async function createConversation(): Promise<Conversation> {
+  const res = await handleResponse(await fetch('/chat/conversations', { method: 'POST' }))
+  return res.json()
+}
+
+export async function getChatHistory(conversationId: number): Promise<ChatMessage[]> {
+  const res = await handleResponse(await fetch(`/chat/history?conversation_id=${conversationId}`))
   return res.json()
 }
 
 export async function streamChatMessage(
+  conversationId: number,
   message: string,
   onToken: (text: string) => void,
   onDone: (content: string, citations: Citation[]) => void,
@@ -48,7 +59,7 @@ export async function streamChatMessage(
   const res = await fetch('/chat/message', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ conversation_id: conversationId, message }),
   })
   const reader = res.body!.getReader()
   const decoder = new TextDecoder()

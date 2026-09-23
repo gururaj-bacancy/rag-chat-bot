@@ -19,3 +19,9 @@ export interface ChatMessage {
   content: string
   citations?: Citation[]
 }
+
+export interface Conversation {
+  id: number
+  title: string
+  created_at: string
+}
