@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { ChatMessage, Conversation } from '../types'
 import { createConversation, getChatHistory, listConversations, streamChatMessage } from '../api/client'
 
@@ -232,7 +234,9 @@ export default function ChatPanel() {
                 <span />
               </span>
             ) : (
-              <span className="message-text">{m.content}</span>
+              <div className="message-text">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+              </div>
             )}
             {m.citations && m.citations.length > 0 && (
               <ul className="citation-list">
